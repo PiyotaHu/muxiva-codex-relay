@@ -18,7 +18,7 @@ class FakeDispatcher:
     def __init__(self) -> None:
         self.received: list[tuple[str, str]] = []
 
-    def enqueue(self, transcript: str, source: str) -> Job:
+    def enqueue(self, transcript: str, source: str, request_id: str | None = None) -> Job:
         if not transcript:
             raise ValueError("transcript is empty")
         self.received.append((transcript, source))

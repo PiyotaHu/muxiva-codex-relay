@@ -43,6 +43,8 @@ class RelayConfig:
     s1_base_url: str | None
     s1_model: str
     s1_timeout_seconds: int
+    ble_enabled: bool
+    ble_device_name: str
 
     @classmethod
     def from_env(cls, env_file: Path | None = None) -> "RelayConfig":
@@ -70,4 +72,6 @@ class RelayConfig:
             s1_base_url=s1_url,
             s1_model=os.getenv("MUXIVA_S1_MODEL", "superwhisper/s1-mini"),
             s1_timeout_seconds=max(1, _int("MUXIVA_S1_TIMEOUT_SECONDS", 20)),
+            ble_enabled=os.getenv("MUXIVA_BLE_ENABLED", "0").lower() in {"1", "true", "yes", "on"},
+            ble_device_name=os.getenv("MUXIVA_BLE_DEVICE_NAME", "Muxiva-RLCD").strip(),
         )

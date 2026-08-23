@@ -5,6 +5,7 @@ import sys
 import threading
 
 from .codex_client import CodexAppServer, discover_codex_binary
+from .ble_transport import BleCodexTransport
 from .config import RelayConfig
 from .dispatcher import TaskDispatcher
 from .http_server import RelayHttpServer
@@ -25,12 +26,14 @@ def run(config: RelayConfig) -> None:
         config.codex_sandbox,
         config.codex_approval_policy,
     )
+    ble = BleCodexTransport(config.ble_enabled, config.ble_device_name, config.relay_token, dispatcher)
     publisher = StatusPublisher(
         codex,
         dispatcher,
         config.esp_hub_url,
         config.esp_hub_token,
         config.status_interval_seconds,
+        ble.publish_status,
     )
     server = RelayHttpServer((config.host, config.port), config.relay_token, dispatcher)
     stop = threading.Event()
@@ -46,6 +49,7 @@ def run(config: RelayConfig) -> None:
         signal.signal(signal.SIGTERM, shutdown)
 
     dispatcher.start()
+    ble.start()
     publisher.start()
     print(f"muxiva-codex-relay listening on http://{config.host}:{config.port}")
     print(f"Codex: {binary}")
@@ -54,6 +58,7 @@ def run(config: RelayConfig) -> None:
         server.serve_forever(poll_interval=0.5)
     finally:
         publisher.stop()
+        ble.stop()
         dispatcher.stop()
         server.server_close()
         codex.close()

@@ -4,7 +4,7 @@ import json
 import threading
 import time
 import urllib.request
-from typing import Any
+from typing import Any, Callable
 
 from .codex_client import CodexAppServer
 from .dispatcher import TaskDispatcher
@@ -87,12 +87,14 @@ class StatusPublisher:
         hub_url: str,
         hub_token: str,
         interval_seconds: int,
+        secondary_publish: Callable[[dict[str, Any]], None] | None = None,
     ):
         self.codex = codex
         self.dispatcher = dispatcher
         self.hub_url = hub_url
         self.hub_token = hub_token
         self.interval_seconds = interval_seconds
+        self.secondary_publish = secondary_publish
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="status-publisher", daemon=True)
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -108,6 +110,8 @@ class StatusPublisher:
             try:
                 threads = self.codex.list_threads(limit=8)
                 payload = build_hub_payload(threads, self.dispatcher.snapshot())
+                if self.secondary_publish:
+                    self.secondary_publish(payload)
                 request = urllib.request.Request(
                     self.hub_url,
                     data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

@@ -32,3 +32,14 @@ def test_dispatcher_normalizes_and_submits() -> None:
     dispatcher.stop()
     assert codex.received == ["fix the login test"]
     assert dispatcher.snapshot()["thread_id"] == "thread-1"
+
+
+def test_dispatcher_deduplicates_transport_retries() -> None:
+    codex = FakeCodex()
+    dispatcher = TaskDispatcher(
+        codex, FakeNormalizer(), "latest", Path.cwd(), "workspace-write", "never"  # type: ignore[arg-type]
+    )
+    first = dispatcher.enqueue("fix it", "wifi", "request-1")
+    second = dispatcher.enqueue("fix it", "ble", "request-1")
+    assert first is second
+    assert dispatcher.snapshot()["queue_size"] == 1

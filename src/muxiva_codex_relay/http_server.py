@@ -51,7 +51,8 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
             payload: dict[str, Any] = json.loads(self.rfile.read(length))
             transcript = str(payload.get("transcript", "")).strip()
             source = str(payload.get("source", "esp32"))[:64]
-            job = self.server.dispatcher.enqueue(transcript, source)
+            request_id = str(payload.get("request_id", "")).strip() or None
+            job = self.server.dispatcher.enqueue(transcript, source, request_id)
         except (ValueError, json.JSONDecodeError) as exc:
             self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return

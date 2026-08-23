@@ -16,6 +16,8 @@ ESP32 麦克风
   -> ESP32 Codex 页面
 ```
 
+Wi-Fi 与 BLE 可以同时启用。ESP32-S3 作为低功耗蓝牙 GATT 外设，电脑端 relay 作为中心设备主动重连；两条链路携带相同的 `request_id`，relay 会去重，因此同一条语音任务最多提交一次。BLE 使用 `bleak` 可选依赖：`pip install -e .[ble]`，再设置 `MUXIVA_BLE_ENABLED=1`。
+
 relay 使用 Codex CLI 自带的本机 `app-server` JSONL 协议来列出、恢复和启动任务，不写 Codex 的 SQLite 数据库，也不模拟桌面 UI。默认恢复最近一个空闲会话；找不到可恢复会话时创建新会话。
 
 电脑端 relay 与 S1-mini 启动脚本都带异常退出后的自动重启循环；安装自启动后，它们会在用户登录 Windows 时自动运行。
@@ -48,6 +50,8 @@ relay 使用 Codex CLI 自带的本机 `app-server` JSONL 协议来列出、恢�
 管理员环境会安装带重启策略的计划任务；普通用户环境会自动退回当前用户的登录启动项。两种方式都使用脚本内置的进程守护。
 
 健康检查：`GET http://127.0.0.1:8765/health`。状态接口和提交接口都使用 Bearer token；提交接口是 `POST /v1/transcripts`。
+
+如果 Windows 把 Wi-Fi 识别成公用网络且不能添加入站规则，可以使用可选的树莓派桥接：树莓派在局域网监听 8765，电脑主动建立反向 SSH 隧道到树莓派的 18765。ESP32 访问树莓派地址，Codex 和 S1-mini 仍只在电脑上运行。`pi-lan-bridge.py` 与 `start-pi-tunnel.ps1` 都是可守护重启的参考实现，SSH 私钥只放在被忽略的 `runtime/` 中。
 
 ## 按键约定
 

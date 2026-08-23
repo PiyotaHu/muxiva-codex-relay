@@ -57,12 +57,24 @@ class TaskDispatcher:
     def stop(self) -> None:
         self._stop.set()
 
-    def enqueue(self, transcript: str, source: str) -> RelayJob:
+    def enqueue(self, transcript: str, source: str, request_id: str | None = None) -> RelayJob:
         transcript = transcript.strip()
         if not transcript:
             raise ValueError("transcript is empty")
-        job = RelayJob(str(uuid.uuid4()), transcript, source, time.time())
-        self._queue.put_nowait(job)
+        job_id = (request_id or str(uuid.uuid4())).strip()[:128]
+        if not job_id:
+            job_id = str(uuid.uuid4())
+        with self._lock:
+            previous = getattr(self, "_seen", {}).get(job_id)
+            if previous is not None:
+                return previous
+            job = RelayJob(job_id, transcript, source, time.time())
+            self._queue.put_nowait(job)
+            if not hasattr(self, "_seen"):
+                self._seen: dict[str, RelayJob] = {}
+            self._seen[job_id] = job
+            if len(self._seen) > 256:
+                self._seen.pop(next(iter(self._seen)))
         self._set_state("queued", "语音任务已进入队列", job.id)
         return job
 

@@ -25,6 +25,7 @@ muxiva-codex-relay = "muxiva_codex_relay.app:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+ble = ["bleak>=0.22,<2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/muxiva_codex_relay"]
