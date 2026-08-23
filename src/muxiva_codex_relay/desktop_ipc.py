@@ -7,6 +7,7 @@ import socket
 import struct
 import tempfile
 import threading
+import time
 import uuid
 from typing import Any, BinaryIO
 
@@ -110,11 +111,31 @@ class CodexDesktopIpc:
         conversation_id: str,
         text: str,
         client_message_id: str,
+        cwd: str,
     ) -> dict[str, Any]:
+        input_items = [{"type": "text", "text": text, "text_elements": []}]
+        restore_message = {
+            "id": client_message_id,
+            "text": text,
+            "context": {
+                "prompt": text,
+                "addedFiles": [],
+                "fileAttachments": [],
+                "ideContext": None,
+                "imageAttachments": [],
+                "commentAttachments": [],
+                "mcpAppModelContextAttachments": [],
+                "workspaceRoots": [cwd],
+                "collaborationMode": None,
+            },
+            "cwd": cwd,
+            "createdAt": int(time.time() * 1000),
+            "responsesapiClientMetadata": {},
+        }
         params = {
             "conversationId": conversation_id,
-            "input": [{"type": "text", "text": text}],
-            "restoreMessage": None,
+            "input": input_items,
+            "restoreMessage": restore_message,
             "serviceTier": None,
             "attachments": [],
             "clientUserMessageId": client_message_id,

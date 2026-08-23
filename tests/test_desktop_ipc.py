@@ -91,6 +91,7 @@ def test_follower_result_is_unwrapped_to_app_server_shape(monkeypatch) -> None:
         "thread-1",
         "继续任务",
         "voice-job-1",
+        "/Users/tester/project",
     )
 
     assert result == {"turnId": "turn-1"}
@@ -99,3 +100,8 @@ def test_follower_result_is_unwrapped_to_app_server_shape(monkeypatch) -> None:
     assert owner_id == "desktop-owner"
     assert params["conversationId"] == "thread-1"
     assert params["clientUserMessageId"] == "voice-job-1"
+    assert params["restoreMessage"]["cwd"] == "/Users/tester/project"
+    assert params["restoreMessage"]["context"]["workspaceRoots"] == [
+        "/Users/tester/project"
+    ]
+    assert params["restoreMessage"]["context"]["fileAttachments"] == []

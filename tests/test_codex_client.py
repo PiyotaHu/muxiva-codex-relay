@@ -231,8 +231,8 @@ class FakeDesktopIpc:
         self.calls.append(("discover", host_id, conversation_id))
         return "desktop-owner"
 
-    def steer_turn(self, owner_id, conversation_id, text, client_message_id):
-        self.calls.append(("steer", owner_id, conversation_id, text, client_message_id))
+    def steer_turn(self, owner_id, conversation_id, text, client_message_id, cwd):
+        self.calls.append(("steer", owner_id, conversation_id, text, client_message_id, cwd))
         if self.steer_error:
             raise CodexDesktopIpcError(self.steer_error)
         return self.steer_result
@@ -278,7 +278,14 @@ def test_active_writer_is_forwarded_to_desktop_owner_without_resume_retry() -> N
     assert [method for method, _ in calls] == ["thread/read", "thread/resume"]
     assert client._desktop_ipc.calls == [
         ("discover", "local", "thread-owned"),
-        ("steer", "desktop-owner", "thread-owned", "继续刚才的任务", "voice-job-7"),
+        (
+            "steer",
+            "desktop-owner",
+            "thread-owned",
+            "继续刚才的任务",
+            "voice-job-7",
+            str(Path.cwd()),
+        ),
     ]
 
 

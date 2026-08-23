@@ -292,6 +292,7 @@ class CodexAppServer:
                         thread_id,
                         text,
                         client_message_id,
+                        cwd,
                     )
                 # The active turn may have started between thread/read and
                 # thread/resume. Re-read once and steer it. If the thread is
@@ -319,6 +320,7 @@ class CodexAppServer:
                             thread_id,
                             text,
                             client_message_id,
+                            cwd,
                         )
                     raise CodexProtocolError(
                         f"无法恢复空闲 Codex 会话 {thread_id}：{retry_exc}"
@@ -365,7 +367,16 @@ class CodexAppServer:
     @staticmethod
     def _is_no_active_turn_error(exc: BaseException) -> bool:
         message = str(exc).lower()
-        return "no active turn" in message or "without an active turn" in message
+        return any(
+            marker in message
+            for marker in (
+                "no active turn",
+                "without an active turn",
+                "active turn already ended",
+                "steerturninactiveerror",
+                "noactiveturn",
+            )
+        )
 
     @staticmethod
     def _desktop_turn(result: dict[str, Any]) -> dict[str, Any]:
@@ -380,6 +391,7 @@ class CodexAppServer:
         thread_id: str,
         text: str,
         client_message_id: str | None,
+        cwd: Path,
     ) -> dict[str, Any]:
         """Forward a task to the Codex Desktop process that owns the thread.
 
@@ -409,7 +421,13 @@ class CodexAppServer:
             )
 
         try:
-            result = desktop_ipc.steer_turn(owner_id, thread_id, text, message_id)
+            result = desktop_ipc.steer_turn(
+                owner_id,
+                thread_id,
+                text,
+                message_id,
+                str(cwd),
+            )
             return {
                 "threadId": thread_id,
                 "turn": self._desktop_turn(result),
