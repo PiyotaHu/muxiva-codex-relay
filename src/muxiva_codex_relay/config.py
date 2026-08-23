@@ -45,6 +45,14 @@ class RelayConfig:
     s1_timeout_seconds: int
     ble_enabled: bool
     ble_device_name: str
+    asr_api_key: str
+    asr_workspace_id: str
+    asr_region: str
+    asr_model: str
+    asr_timeout_seconds: int
+    asr_provider: str
+    sensevoice_model_dir: Path
+    sensevoice_threads: int
 
     @classmethod
     def from_env(cls, env_file: Path | None = None) -> "RelayConfig":
@@ -74,4 +82,17 @@ class RelayConfig:
             s1_timeout_seconds=max(1, _int("MUXIVA_S1_TIMEOUT_SECONDS", 20)),
             ble_enabled=os.getenv("MUXIVA_BLE_ENABLED", "0").lower() in {"1", "true", "yes", "on"},
             ble_device_name=os.getenv("MUXIVA_BLE_DEVICE_NAME", "Muxiva-RLCD").strip(),
+            asr_api_key=os.getenv("DASHSCOPE_API_KEY", "").strip(),
+            asr_workspace_id=os.getenv("DASHSCOPE_WORKSPACE_ID", "").strip(),
+            asr_region=os.getenv("MUXIVA_ASR_REGION", "cn-beijing").strip(),
+            asr_model=os.getenv("MUXIVA_ASR_MODEL", "qwen3-asr-flash-realtime").strip(),
+            asr_timeout_seconds=max(5, _int("MUXIVA_ASR_TIMEOUT_SECONDS", 25)),
+            asr_provider=os.getenv("MUXIVA_ASR_PROVIDER", "sensevoice").strip().lower(),
+            sensevoice_model_dir=Path(
+                os.getenv(
+                    "MUXIVA_SENSEVOICE_MODEL_DIR",
+                    str(Path.cwd() / "runtime" / "models" / "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"),
+                )
+            ).expanduser().resolve(),
+            sensevoice_threads=max(1, _int("MUXIVA_SENSEVOICE_THREADS", 2)),
         )

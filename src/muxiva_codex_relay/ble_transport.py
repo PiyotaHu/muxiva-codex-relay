@@ -28,6 +28,8 @@ class BleCodexTransport:
         self._client: Any = None
         self._buffer = bytearray()
         self._write_lock: asyncio.Lock | None = None
+        self._write_pending = threading.Event()
+        self._status_ready_logged = False
 
     def start(self) -> None:
         if self.enabled:
@@ -58,21 +60,92 @@ class BleCodexTransport:
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                 continue
 
+    @staticmethod
+    def _encode_status(payload: dict[str, Any]) -> bytes:
+        # The HTTP payload retains compatibility metadata, but BLE only needs
+        # the single conversation rendered by the 400x300 display. Avoid
+        # sending the same agent twice through ``latest`` and ``all_agents``.
+        agents = payload.get("all_agents")
+        compact = {
+            "type": "status",
+            "ts": payload.get("ts"),
+            "all_agents": list(agents[:1]) if isinstance(agents, list) else [],
+            "active_count": payload.get("active_count", 0),
+        }
+        data = json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+        if len(data) <= 1024:
+            return data
+
+        # Defensive fallback for unusually long multi-byte text. Trim visible
+        # fields in priority order and guarantee the firmware's 1024-byte
+        # receive buffer is never exceeded.
+        agent = compact["all_agents"][0] if compact["all_agents"] else None
+        if isinstance(agent, dict):
+            agent = dict(agent)
+            compact["all_agents"] = [agent]
+            for key in ("last_assistant", "last_user", "detail", "cwd"):
+                value = str(agent.get(key) or "")
+                while value and len(data) > 1024:
+                    value = value[:-8].rstrip()
+                    agent[key] = value + ("…" if value else "")
+                    data = json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+            if len(data) > 1024:
+                # Unknown optional fields from future status versions must not
+                # be allowed to break the BLE stream.
+                agent = {key: agent[key] for key in ("agent_id", "state", "detail") if key in agent}
+                compact["all_agents"] = [agent]
+                data = json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+        return data
+
     def publish_status(self, payload: dict[str, Any]) -> None:
         loop, client = self._loop, self._client
-        if not loop or not client or not getattr(client, "is_connected", False):
+        if (not loop or not client or not getattr(client, "is_connected", False)
+                or self._write_pending.is_set()):
             return
-        data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
-        asyncio.run_coroutine_threadsafe(self._write_status(data), loop)
+        data = self._encode_status(payload)
+        if len(data) > 1024:
+            print(f"BLE status frame too large: {len(data)} bytes")
+            return
+        self._write_pending.set()
+        try:
+            future = asyncio.run_coroutine_threadsafe(self._write_status(data), loop)
+        except Exception:
+            self._write_pending.clear()
+            raise
+
+        def completed(result: Any) -> None:
+            self._write_pending.clear()
+            try:
+                result.result()
+            except Exception as exc:
+                print(f"BLE status write failed: {exc}")
+
+        future.add_done_callback(completed)
 
     async def _write_status(self, data: bytes) -> None:
-        if not self._client or not self._client.is_connected:
+        client = self._client
+        if not client or not client.is_connected:
             return
         if self._write_lock is None:
             self._write_lock = asyncio.Lock()
         async with self._write_lock:
-            for offset in range(0, len(data), 180):
-                await self._client.write_gatt_char(STATUS_UUID, data[offset : offset + 180], response=False)
+            try:
+                mtu_size = int(getattr(client, "mtu_size", 23) or 23)
+            except (TypeError, ValueError):
+                mtu_size = 23
+            # ATT writes can carry at most MTU-3 bytes. The ESP advertises an
+            # MTU of 128, while Windows may temporarily report the default 23.
+            chunk_size = max(20, min(120, mtu_size - 3))
+            for offset in range(0, len(data), chunk_size):
+                await client.write_gatt_char(
+                    STATUS_UUID,
+                    data[offset : offset + chunk_size],
+                    response=True,
+                )
+                await asyncio.sleep(0.005)
+            if not self._status_ready_logged:
+                self._status_ready_logged = True
+                print(f"BLE status channel ready: mtu={mtu_size}, frame={len(data)} bytes")
 
     def _thread_main(self) -> None:
         try:
