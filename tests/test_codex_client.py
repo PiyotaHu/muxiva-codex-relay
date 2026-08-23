@@ -274,6 +274,7 @@ def test_active_writer_is_forwarded_to_desktop_owner_without_resume_retry() -> N
         "turn": {"id": "desktop-turn", "status": "inProgress"},
         "steered": True,
         "transport": "desktop-ipc",
+        "detached": True,
     }
     assert [method for method, _ in calls] == ["thread/read", "thread/resume"]
     assert client._desktop_ipc.calls == [

@@ -433,6 +433,7 @@ class CodexAppServer:
                 "turn": self._desktop_turn(result),
                 "steered": True,
                 "transport": "desktop-ipc",
+                "detached": True,
             }
         except CodexDesktopIpcError as steer_exc:
             if not self._is_no_active_turn_error(steer_exc):
@@ -450,6 +451,7 @@ class CodexAppServer:
             "threadId": thread_id,
             "turn": self._desktop_turn(result),
             "transport": "desktop-ipc",
+            "detached": True,
         }
 
     def active_turn_id(self, thread_id: str) -> str | None:

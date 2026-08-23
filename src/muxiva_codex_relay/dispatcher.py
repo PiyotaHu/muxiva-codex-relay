@@ -371,6 +371,19 @@ class TaskDispatcher:
                     if submitted.get("steered")
                     else f"Codex 已接收：{normalized.text[:72]}"
                 )
+                if submitted.get("detached"):
+                    # The Desktop owner executes this turn in another
+                    # app-server process. Submission is terminal from the
+                    # relay's perspective because its JSONL connection cannot
+                    # receive that owner's turn/completed notification.
+                    self._set_state(
+                        "submitted",
+                        f"已提交到 Codex Desktop：{normalized.text[:64]}",
+                        job.id,
+                        thread_id,
+                        normalized.engine,
+                    )
+                    continue
                 self._set_running(
                     detail,
                     job.id,

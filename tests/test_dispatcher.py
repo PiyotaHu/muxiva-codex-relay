@@ -284,3 +284,34 @@ def test_dispatcher_reports_steering_instead_of_queueing() -> None:
     assert dispatcher.snapshot()["thread_id"] == "thread-1"
     assert dispatcher.snapshot()["queue_size"] == 0
     assert "已追加到当前 Codex 回答" in str(dispatcher.snapshot()["detail"])
+
+
+def test_dispatcher_closes_desktop_owned_submission_without_waiting_for_foreign_events() -> None:
+    class DesktopOwnedCodex(FakeCodex):
+        def submit_task(self, *args, **kwargs):
+            return {
+                "threadId": "thread-desktop",
+                "turn": {"id": "turn-desktop", "status": "inProgress"},
+                "transport": "desktop-ipc",
+                "detached": True,
+            }
+
+    dispatcher = TaskDispatcher(
+        DesktopOwnedCodex(),  # type: ignore[arg-type]
+        FakeNormalizer(),
+        "latest",
+        Path.cwd(),
+        "workspace-write",
+        "never",
+    )
+    dispatcher.start()
+    dispatcher.enqueue("check financial results", "test", "voice-desktop-1")
+    deadline = time.time() + 2
+    while time.time() < deadline and dispatcher.snapshot()["stage"] != "submitted":
+        time.sleep(0.01)
+    snapshot = dispatcher.snapshot()
+    dispatcher.stop()
+
+    assert snapshot["stage"] == "submitted"
+    assert snapshot["thread_id"] == "thread-desktop"
+    assert "已提交到 Codex Desktop" in str(snapshot["detail"])
