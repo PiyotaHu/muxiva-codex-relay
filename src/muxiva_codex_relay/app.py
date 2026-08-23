@@ -3,6 +3,7 @@ from __future__ import annotations
 import signal
 import sys
 import threading
+from pathlib import Path
 
 from .codex_client import CodexAppServer, discover_codex_binary
 from .ble_transport import BleCodexTransport
@@ -51,6 +52,7 @@ def run(config: RelayConfig) -> None:
         config.status_interval_seconds,
         ble.publish_status,
         config.codex_target,
+        Path("runtime/display-active.json"),
     )
     server = RelayHttpServer(
         (config.host, config.port),
@@ -98,3 +100,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

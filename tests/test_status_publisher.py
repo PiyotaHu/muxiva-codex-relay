@@ -21,7 +21,7 @@ class FakeDispatcher:
         return {"stage": "idle", "queue_size": 0}
 
 
-def make_publisher(codex: FakeCodex, target: str = "latest") -> StatusPublisher:
+def make_publisher(codex: FakeCodex, target: str = "latest", display_state_path=None) -> StatusPublisher:
     return StatusPublisher(
         codex,  # type: ignore[arg-type]
         FakeDispatcher(),  # type: ignore[arg-type]
@@ -29,6 +29,7 @@ def make_publisher(codex: FakeCodex, target: str = "latest") -> StatusPublisher:
         "token",
         1,
         target=target,
+        display_state_path=display_state_path,
     )
 
 
@@ -144,3 +145,16 @@ def test_reentering_display_refreshes_latest_thread() -> None:
     latest = [{"id": "thread-latest", "name": "配置树莓派SSH登录"}]
     assert publisher._select_threads(latest) == latest
     assert codex.session_thread_id == "thread-latest"
+
+
+def test_display_active_survives_relay_restart(tmp_path) -> None:
+    state_path = tmp_path / "display-active.json"
+    first = make_publisher(FakeCodex(), display_state_path=state_path)
+    first.set_display_active(True)
+
+    restarted = make_publisher(FakeCodex(), display_state_path=state_path)
+
+    assert restarted.display_active is True
+    restarted.set_display_active(False)
+    assert make_publisher(FakeCodex(), display_state_path=state_path).display_active is False
+

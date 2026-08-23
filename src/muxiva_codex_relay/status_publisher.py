@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import threading
 import time
 import urllib.request
@@ -152,6 +153,7 @@ class StatusPublisher:
         interval_seconds: int,
         secondary_publish: Callable[[dict[str, Any]], None] | None = None,
         target: str = "latest",
+        display_state_path: Path | None = None,
     ):
         self.codex = codex
         self.dispatcher = dispatcher
@@ -160,6 +162,7 @@ class StatusPublisher:
         self.interval_seconds = interval_seconds
         self.secondary_publish = secondary_publish
         self.target = target
+        self.display_state_path = display_state_path
         self._stop = threading.Event()
         # ESP32 starts on the Xiaozhi/weather page. Do not continuously push
         # Codex snapshots over its real-time audio Wi-Fi path until the user
@@ -169,6 +172,9 @@ class StatusPublisher:
         # resolved conversation stable while that page remains open so an
         # in-flight voice task cannot jump to a different desktop thread.
         self._refresh_latest = threading.Event()
+        if self._load_display_active():
+            self._display_active.set()
+            self._refresh_latest.set()
         self._thread = threading.Thread(target=self._run, name="status-publisher", daemon=True)
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self._thread_cache: dict[str, tuple[object, dict[str, str]]] = {}
@@ -186,10 +192,38 @@ class StatusPublisher:
             self._display_active.set()
         else:
             self._display_active.clear()
+        self._persist_display_active(active)
 
     @property
     def display_active(self) -> bool:
         return self._display_active.is_set()
+
+    def _load_display_active(self) -> bool:
+        path = self.display_state_path
+        if path is None:
+            return False
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            return payload.get("active") is True
+        except (OSError, ValueError, TypeError):
+            return False
+
+    def _persist_display_active(self, active: bool) -> None:
+        path = self.display_state_path
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(
+                json.dumps({"active": active, "updated_at": time.time()}, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        except OSError:
+            # Status delivery must continue even when the runtime directory is
+            # temporarily read-only.
+            pass
 
     def _select_threads(self, listed_threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
         selected_id = self.codex.session_thread_id
@@ -254,3 +288,4 @@ class StatusPublisher:
                 # The ESP32 may be sleeping or rebooting; next tick retries.
                 pass
             self._stop.wait(self.interval_seconds)
+
