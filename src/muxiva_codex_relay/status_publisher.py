@@ -11,6 +11,10 @@ from .codex_client import CodexAppServer
 from .dispatcher import TaskDispatcher
 
 
+MAX_DISPLAY_USER_CHARS = 256
+MAX_DISPLAY_ASSISTANT_CHARS = 3500
+
+
 def _display_text(thread: dict[str, Any]) -> str:
     value = thread.get("name") or thread.get("preview") or "未命名会话"
     return " ".join(str(value).split())[:48]
@@ -49,15 +53,21 @@ def _compact_sentence(value: object, limit: int) -> str:
 
 
 def extract_recent_messages(thread: dict[str, Any]) -> dict[str, str]:
-    """Extract the latest user and assistant text from a thread/read response."""
-    latest_user = ""
-    latest_assistant = ""
+    """Extract one coherent user/assistant pair from the newest Codex turn.
+
+    A newly submitted turn may contain only ``userMessage`` while Codex is
+    still working.  Never combine that user text with an assistant message
+    from an older turn: the ESP must show an empty answer until this same turn
+    produces one.
+    """
     turns = thread.get("turns")
     if not isinstance(turns, list):
-        return {"last_user": "", "last_assistant": ""}
-    for turn in turns:
+        return {"turn_id": "", "last_user": "", "last_assistant": ""}
+    for turn in reversed(turns):
         if not isinstance(turn, dict):
             continue
+        latest_user = ""
+        latest_assistant = ""
         items = turn.get("items")
         if not isinstance(items, list):
             continue
@@ -71,17 +81,18 @@ def extract_recent_messages(thread: dict[str, Any]) -> dict[str, str]:
                     if isinstance(part, dict) and part.get("type") == "text":
                         parts.append(str(part.get("text") or ""))
                 if parts:
-                    latest_user = _compact_sentence(" ".join(parts), 64)
+                    latest_user = _compact_sentence(" ".join(parts), MAX_DISPLAY_USER_CHARS)
             elif kind == "agentMessage" and item.get("text"):
-                # Roughly seven lines on the 372px-wide Codex panel. BLE uses
-                # a compact status envelope, so the visible answer no longer
-                # has to be cut at 64 Chinese characters.
-                # 400x300 Codex page can show roughly ten CJK lines at once
-                # and now scrolls longer answers. Keep enough text for a full
-                # viewport plus meaningful overflow instead of stopping at
-                # the old seven-line/180-character snapshot.
-                latest_assistant = _compact_sentence(item.get("text"), 420)
-    return {"last_user": latest_user, "last_assistant": latest_assistant}
+                latest_assistant = _compact_sentence(
+                    item.get("text"), MAX_DISPLAY_ASSISTANT_CHARS
+                )
+        if latest_user or latest_assistant:
+            return {
+                "turn_id": str(turn.get("id") or ""),
+                "last_user": latest_user,
+                "last_assistant": latest_assistant,
+            }
+    return {"turn_id": "", "last_user": "", "last_assistant": ""}
 
 
 def build_hub_payload(

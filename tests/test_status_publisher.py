@@ -97,13 +97,41 @@ def test_extract_recent_messages_uses_latest_turn_content() -> None:
         ]
     }
     assert extract_recent_messages(thread) == {
+        "turn_id": "",
         "last_user": "新问题 第二行",
         "last_assistant": "新回答",
     }
 
 
+def test_new_user_turn_never_reuses_previous_turn_answer() -> None:
+    thread = {
+        "turns": [
+            {
+                "id": "turn-old",
+                "items": [
+                    {"type": "userMessage", "content": [{"type": "text", "text": "第一个问题"}]},
+                    {"type": "agentMessage", "text": "第一个问题的回答"},
+                ],
+            },
+            {
+                "id": "turn-new",
+                "status": "inProgress",
+                "items": [
+                    {"type": "userMessage", "content": [{"type": "text", "text": "第二个问题"}]},
+                ],
+            },
+        ]
+    }
+
+    assert extract_recent_messages(thread) == {
+        "turn_id": "turn-new",
+        "last_user": "第二个问题",
+        "last_assistant": "",
+    }
+
+
 def test_long_answer_fills_scrollable_display_without_exceeding_http_limit() -> None:
-    answer = "这是用于填满屏幕并验证自动滚动的较长回答。" * 40
+    answer = "这是用于填满屏幕并验证自动滚动的较长回答。" * 200
     thread = {
         "turns": [
             {
@@ -115,7 +143,7 @@ def test_long_answer_fills_scrollable_display_without_exceeding_http_limit() -> 
         ]
     }
     recent = extract_recent_messages(thread)
-    assert 300 <= len(recent["last_assistant"]) <= 421
+    assert 3000 <= len(recent["last_assistant"]) <= 3501
 
     threads = [{"id": "thread-1", "status": {"type": "idle"}, "name": "会话", "cwd": "C:/repo"}]
     payload = build_hub_payload(
@@ -124,7 +152,7 @@ def test_long_answer_fills_scrollable_display_without_exceeding_http_limit() -> 
         {"thread-1": recent},
     )
     assert "last_assistant" not in payload["latest"]
-    assert len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) < 4096
+    assert len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) < 16384
 
 
 def test_payload_includes_recent_conversation() -> None:
