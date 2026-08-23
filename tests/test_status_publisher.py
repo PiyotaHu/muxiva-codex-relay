@@ -200,6 +200,20 @@ def test_reentering_display_refreshes_latest_thread() -> None:
     assert codex.session_thread_id == "thread-latest"
 
 
+def test_explicit_page_refresh_recovers_when_sleep_notification_was_lost() -> None:
+    codex = FakeCodex("thread-old")
+    publisher = make_publisher(codex)
+    publisher.set_display_active(True)
+    assert publisher._select_threads([{"id": "thread-old"}])[0]["id"] == "thread-old"
+
+    # The relay may still think the page is active if the previous false POST
+    # was lost. A new page-entry refresh must nevertheless select newest.
+    publisher.set_display_active(True, refresh_latest=True)
+    latest = [{"id": "thread-new"}, {"id": "thread-old"}]
+    assert publisher._select_threads(latest)[0]["id"] == "thread-new"
+    assert codex.session_thread_id == "thread-new"
+
+
 def test_display_active_survives_relay_restart(tmp_path) -> None:
     state_path = tmp_path / "display-active.json"
     first = make_publisher(FakeCodex(), display_state_path=state_path)

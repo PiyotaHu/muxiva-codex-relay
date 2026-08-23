@@ -24,7 +24,7 @@ Codex 连接默认遵循官方 App Server transport 边界：Windows、macOS 和
 
 如果目标会话已有一个 Codex 回答正在执行，relay 会读取真实的活动 turn id，并通过官方 `turn/steer` 把确认后的语音直接追加到当前回答，不创建新 turn，也不进入持久队列。会话空闲时才使用 `turn/start` 启动新 turn；无法确认真实活动 turn 时会明确报错，不再把 `thread/resume` 异常误报成“回答中、已排队”。
 
-为避免影响同一开发板上的小智实时音频，Codex 状态推送默认休眠。ESP32 切入 Codex 页时调用 `/v1/display` 激活，离开页面时立即停推；提交录音也会自动激活。这样天气/小喵页面不会每 3 秒接收 Codex HTTP/BLE 状态流量。
+为避免影响同一开发板上的小智实时音频，Codex 状态推送默认休眠。ESP32 切入 Codex 页时调用 `/v1/display`，发送 `active=true` 和 `refresh_latest=true`，激活推送并重新选择最新会话；离开页面时立即停推。显式刷新不依赖 relay 先收到休眠通知，因此即使切出页面时短暂断网，下一次进入仍能自愈。提交录音只激活推送，不会在当前页面会话中途跳到另一个会话。
 
 电脑端 relay 与 S1-mini 启动脚本都带异常退出后的自动重启循环；Windows 使用计划任务，macOS 使用用户级 `launchd`。relay 的 Python 服务同时支持 Windows、macOS Intel 和 Apple Silicon。两端都以官方 `codex app-server` stdio 协议为主；仅当目标会话正在 Codex Desktop 中被持有时，分别使用 named pipe 或 Unix socket 的 owner 路由适配器。
 

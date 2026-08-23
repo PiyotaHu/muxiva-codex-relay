@@ -18,11 +18,11 @@ class RelayHttpServer(ThreadingHTTPServer):
         address: tuple[str, int],
         token: str,
         dispatcher: TaskDispatcher,
-        set_display_active: Callable[[bool], None] | None = None,
+        set_display_active: Callable[[bool, bool], None] | None = None,
     ):
         self.token = token
         self.dispatcher = dispatcher
-        self.set_display_active = set_display_active or (lambda _active: None)
+        self.set_display_active = set_display_active or (lambda _active, _refresh: None)
         super().__init__(address, RelayRequestHandler)
 
 
@@ -69,11 +69,17 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
                 active = payload.get("active")
                 if not isinstance(active, bool):
                     raise ValueError("active must be boolean")
-                self.server.set_display_active(active)
-                self._json(HTTPStatus.OK, {"ok": True, "active": active})
+                refresh_latest = payload.get("refresh_latest", False)
+                if not isinstance(refresh_latest, bool):
+                    raise ValueError("refresh_latest must be boolean")
+                self.server.set_display_active(active, refresh_latest)
+                self._json(
+                    HTTPStatus.OK,
+                    {"ok": True, "active": active, "refresh_latest": refresh_latest},
+                )
                 return
             if self.path in {"/v1/audio", "/v1/audio/preview"}:
-                self.server.set_display_active(True)
+                self.server.set_display_active(True, False)
                 source = str(self.headers.get("X-Muxiva-Source", "esp32"))[:64]
                 request_id = str(self.headers.get("X-Request-Id", "")).strip() or None
                 if self.path == "/v1/audio/preview":
@@ -99,7 +105,7 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
                     self._json(HTTPStatus.OK, {"cancelled": cancelled, "request_id": request_id})
                     return
             else:
-                self.server.set_display_active(True)
+                self.server.set_display_active(True, False)
                 payload: dict[str, Any] = json.loads(body)
                 transcript = str(payload.get("transcript", "")).strip()
                 source = str(payload.get("source", "esp32"))[:64]

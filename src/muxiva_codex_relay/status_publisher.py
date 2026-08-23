@@ -208,9 +208,9 @@ class StatusPublisher:
     def stop(self) -> None:
         self._stop.set()
 
-    def set_display_active(self, active: bool) -> None:
+    def set_display_active(self, active: bool, refresh_latest: bool = False) -> None:
         if active:
-            if not self._display_active.is_set():
+            if refresh_latest or not self._display_active.is_set():
                 self._refresh_latest.set()
             self._display_active.set()
         else:

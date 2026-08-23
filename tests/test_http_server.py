@@ -165,21 +165,26 @@ def test_pending_preview_can_be_cancelled() -> None:
 
 def test_display_endpoint_controls_status_publishing() -> None:
     dispatcher = FakeDispatcher()
-    states: list[bool] = []
-    server = RelayHttpServer(("127.0.0.1", 0), "secret", dispatcher, states.append)  # type: ignore[arg-type]
+    states: list[tuple[bool, bool]] = []
+    server = RelayHttpServer(
+        ("127.0.0.1", 0),
+        "secret",
+        dispatcher,
+        lambda active, refresh: states.append((active, refresh)),
+    )  # type: ignore[arg-type]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for active in (True, False):
+        for active, refresh in ((True, True), (False, False)):
             request = urllib.request.Request(
                 f"http://127.0.0.1:{server.server_port}/v1/display",
-                data=json.dumps({"active": active}).encode(),
+                data=json.dumps({"active": active, "refresh_latest": refresh}).encode(),
                 headers={"Authorization": "Bearer secret", "Content-Type": "application/json"},
                 method="POST",
             )
             with urllib.request.urlopen(request, timeout=2) as response:
                 assert response.status == 200
-        assert states == [True, False]
+        assert states == [(True, True), (False, False)]
     finally:
         server.shutdown()
         server.server_close()
