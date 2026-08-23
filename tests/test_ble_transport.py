@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 
-from muxiva_codex_relay.ble_transport import BleCodexTransport
+from muxiva_codex_relay.ble_transport import BleCodexTransport, MAX_STATUS_FRAME_BYTES
 
 
 @dataclass
@@ -63,7 +63,7 @@ def test_ble_status_uses_compact_single_conversation_frame() -> None:
     frame = BleCodexTransport._encode_status(payload)
     decoded = json.loads(frame)
 
-    assert len(frame) <= 1024
+    assert len(frame) <= MAX_STATUS_FRAME_BYTES
     assert "latest" not in decoded
     assert "groups" not in decoded
     assert decoded["all_agents"][0]["agent_id"] == "thread-1"
@@ -86,5 +86,5 @@ def test_ble_status_trims_oversized_user_and_metadata_without_answer() -> None:
 
     frame = BleCodexTransport._encode_status(payload)
 
-    assert len(frame) <= 1024
+    assert len(frame) <= MAX_STATUS_FRAME_BYTES
     assert json.loads(frame)["all_agents"][0]["agent_id"] == "thread-1"

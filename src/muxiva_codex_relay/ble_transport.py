@@ -12,6 +12,7 @@ from .dispatcher import TaskDispatcher
 SERVICE_UUID = "7e400001-b5a3-f393-e0a9-e50e24dcca9e"
 TRANSCRIPT_UUID = "7e400002-b5a3-f393-e0a9-e50e24dcca9e"
 STATUS_UUID = "7e400003-b5a3-f393-e0a9-e50e24dcca9e"
+MAX_STATUS_FRAME_BYTES = 2048
 
 
 class BleCodexTransport:
@@ -73,7 +74,7 @@ class BleCodexTransport:
             "active_count": payload.get("active_count", 0),
         }
         data = json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
-        if len(data) <= 1024:
+        if len(data) <= MAX_STATUS_FRAME_BYTES:
             return data
 
         # Defensive fallback for unusually long multi-byte text. Trim visible
@@ -85,11 +86,11 @@ class BleCodexTransport:
             compact["all_agents"] = [agent]
             for key in ("last_assistant", "last_user", "detail", "cwd"):
                 value = str(agent.get(key) or "")
-                while value and len(data) > 1024:
+                while value and len(data) > MAX_STATUS_FRAME_BYTES:
                     value = value[:-8].rstrip()
                     agent[key] = value + ("…" if value else "")
                     data = json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
-            if len(data) > 1024:
+            if len(data) > MAX_STATUS_FRAME_BYTES:
                 # Unknown optional fields from future status versions must not
                 # be allowed to break the BLE stream.
                 agent = {key: agent[key] for key in ("agent_id", "state", "detail") if key in agent}
@@ -103,7 +104,7 @@ class BleCodexTransport:
                 or self._write_pending.is_set()):
             return
         data = self._encode_status(payload)
-        if len(data) > 1024:
+        if len(data) > MAX_STATUS_FRAME_BYTES:
             print(f"BLE status frame too large: {len(data)} bytes")
             return
         self._write_pending.set()

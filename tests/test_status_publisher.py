@@ -102,6 +102,31 @@ def test_extract_recent_messages_uses_latest_turn_content() -> None:
     }
 
 
+def test_long_answer_fills_scrollable_display_without_exceeding_http_limit() -> None:
+    answer = "这是用于填满屏幕并验证自动滚动的较长回答。" * 40
+    thread = {
+        "turns": [
+            {
+                "items": [
+                    {"type": "userMessage", "content": [{"type": "text", "text": "请详细解释"}]},
+                    {"type": "agentMessage", "text": answer},
+                ]
+            }
+        ]
+    }
+    recent = extract_recent_messages(thread)
+    assert 300 <= len(recent["last_assistant"]) <= 421
+
+    threads = [{"id": "thread-1", "status": {"type": "idle"}, "name": "会话", "cwd": "C:/repo"}]
+    payload = build_hub_payload(
+        threads,
+        {"stage": "idle", "queue_size": 0},
+        {"thread-1": recent},
+    )
+    assert "last_assistant" not in payload["latest"]
+    assert len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) < 4096
+
+
 def test_payload_includes_recent_conversation() -> None:
     threads = [{"id": "thread-1", "status": {"type": "idle"}, "name": "会话", "cwd": "C:/repo"}]
     payload = build_hub_payload(

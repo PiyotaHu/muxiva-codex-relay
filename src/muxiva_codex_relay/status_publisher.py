@@ -76,7 +76,11 @@ def extract_recent_messages(thread: dict[str, Any]) -> dict[str, str]:
                 # Roughly seven lines on the 372px-wide Codex panel. BLE uses
                 # a compact status envelope, so the visible answer no longer
                 # has to be cut at 64 Chinese characters.
-                latest_assistant = _compact_sentence(item.get("text"), 180)
+                # 400x300 Codex page can show roughly ten CJK lines at once
+                # and now scrolls longer answers. Keep enough text for a full
+                # viewport plus meaningful overflow instead of stopping at
+                # the old seven-line/180-character snapshot.
+                latest_assistant = _compact_sentence(item.get("text"), 420)
     return {"last_user": latest_user, "last_assistant": latest_assistant}
 
 
@@ -124,10 +128,18 @@ def build_hub_payload(
         "cwd": "Codex",
     }
     active_count = sum(item["state"] in {"busy", "waiting"} for item in agents)
+    # ``latest`` and ``all_agents[0]`` refer to the same conversation. The
+    # firmware renders the full message from all_agents; avoid duplicating the
+    # potentially long answer in the HTTP frame (the ESP endpoint has a small
+    # bounded request buffer).
+    latest_summary = dict(latest)
+    if agents:
+        latest_summary.pop("last_user", None)
+        latest_summary.pop("last_assistant", None)
     return {
         "type": "status",
         "ts": int(time.time()),
-        "latest": latest,
+        "latest": latest_summary,
         "all_agents": agents,
         "active_count": active_count,
         "groups": [
