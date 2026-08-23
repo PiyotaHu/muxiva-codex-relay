@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+import json
 
 from muxiva_codex_relay.ble_transport import BleCodexTransport
 
@@ -66,4 +67,25 @@ def test_ble_status_uses_compact_single_conversation_frame() -> None:
     assert "latest" not in decoded
     assert "groups" not in decoded
     assert decoded["all_agents"][0]["agent_id"] == "thread-1"
-import json
+
+
+def test_ble_status_trims_oversized_user_and_metadata_without_answer() -> None:
+    payload = {
+        "type": "status",
+        "ts": 1,
+        "all_agents": [{
+            "agent_id": "thread-1",
+            "state": "busy",
+            "detail": "状态" * 300,
+            "cwd": "目录" * 300,
+            "last_user": "问题" * 300,
+            "last_assistant": "",
+        }],
+        "active_count": 1,
+    }
+
+    frame = BleCodexTransport._encode_status(payload)
+
+    assert len(frame) <= 1024
+    assert json.loads(frame)["all_agents"][0]["agent_id"] == "thread-1"
+

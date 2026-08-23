@@ -289,6 +289,20 @@ class CodexAppServer:
             raise CodexProtocolError("thread/queue/start returned no turn")
         return turn
 
+    def list_queued_tasks(self, thread_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Return Codex's persistent queue for a conversation.
+
+        The queue belongs to Codex, not to this relay process. Reading it lets
+        the dispatcher recover submissions after a relay restart instead of
+        leaving them stranded in the desktop app-server.
+        """
+        result = self.request(
+            "thread/queue/list",
+            {"threadId": thread_id, "limit": limit},
+        )
+        data = result.get("data")
+        return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+
     def _send(self, message: dict[str, Any]) -> None:
         process = self._process
         if not process or process.poll() is not None or not process.stdin:
@@ -328,3 +342,4 @@ class CodexAppServer:
         if process and process.stderr:
             for _ in process.stderr:
                 pass
+

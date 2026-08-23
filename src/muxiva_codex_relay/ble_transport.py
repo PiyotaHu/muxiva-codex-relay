@@ -76,16 +76,24 @@ class BleCodexTransport:
         if len(data) <= 1024:
             return data
 
-        # Defensive fallback for unusually long multi-byte text. Prefer
-        # keeping the user's request and trim only the answer shown on screen.
+        # Defensive fallback for unusually long multi-byte text. Trim visible
+        # fields in priority order and guarantee the firmware's 1024-byte
+        # receive buffer is never exceeded.
         agent = compact["all_agents"][0] if compact["all_agents"] else None
         if isinstance(agent, dict):
             agent = dict(agent)
             compact["all_agents"] = [agent]
-            answer = str(agent.get("last_assistant") or "")
-            while answer and len(data) > 1024:
-                answer = answer[:-8].rstrip() + "…"
-                agent["last_assistant"] = answer
+            for key in ("last_assistant", "last_user", "detail", "cwd"):
+                value = str(agent.get(key) or "")
+                while value and len(data) > 1024:
+                    value = value[:-8].rstrip()
+                    agent[key] = value + ("…" if value else "")
+                    data = json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+            if len(data) > 1024:
+                # Unknown optional fields from future status versions must not
+                # be allowed to break the BLE stream.
+                agent = {key: agent[key] for key in ("agent_id", "state", "detail") if key in agent}
+                compact["all_agents"] = [agent]
                 data = json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
         return data
 
@@ -173,3 +181,4 @@ class BleCodexTransport:
                 await asyncio.sleep(3)
             finally:
                 self._client = None
+

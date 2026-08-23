@@ -15,6 +15,7 @@ class FakeCodex:
     def __init__(self) -> None:
         self.received: list[str] = []
         self.listeners = []
+        self.session_thread_id: str | None = None
 
     def add_listener(self, listener) -> None:
         self.listeners.append(listener)
@@ -45,24 +46,43 @@ class FakeQueuedCodex(FakeCodex):
     def __init__(self) -> None:
         super().__init__()
         self.start_attempts = 0
+        self.queued: list[dict[str, object]] = []
 
     def submit_task(
         self, text: str, target: str, cwd: Path, sandbox: str, approval: str,
         client_message_id: str | None = None,
     ):
         self.received.append(text)
+        submission_id = f"queued-{len(self.queued) + 1}"
+        submission = {
+            "id": submission_id,
+            "clientUserMessageId": client_message_id or submission_id,
+            "input": [{"type": "text", "text": text}],
+        }
+        self.queued.append(submission)
+        self.session_thread_id = "thread-1"
         return {
             "threadId": "thread-1",
             "turn": {},
             "queued": True,
-            "queuedSubmissionId": "queued-1",
+            "queuedSubmissionId": submission_id,
         }
+
+    def list_queued_tasks(self, thread_id: str, limit: int = 20):
+        return self.queued[:limit]
 
     def start_queued_task(self, thread_id: str, queued_submission_id: str):
         self.start_attempts += 1
         if self.start_attempts == 1:
             raise CodexProtocolError("active turn")
+        self.queued = [item for item in self.queued if item["id"] != queued_submission_id]
         return {"id": "turn-queued"}
+
+
+class FakeAlwaysBusyCodex(FakeQueuedCodex):
+    def start_queued_task(self, thread_id: str, queued_submission_id: str):
+        self.start_attempts += 1
+        raise CodexProtocolError("active turn")
 
 
 def test_dispatcher_normalizes_and_submits() -> None:
@@ -78,6 +98,31 @@ def test_dispatcher_normalizes_and_submits() -> None:
     dispatcher.stop()
     assert codex.received == ["fix the login test"]
     assert dispatcher.snapshot()["thread_id"] == "thread-1"
+
+
+def test_busy_native_queue_never_blocks_later_submissions() -> None:
+    codex = FakeAlwaysBusyCodex()
+    dispatcher = TaskDispatcher(
+        codex,  # type: ignore[arg-type]
+        FakeNormalizer(),
+        "latest",
+        Path.cwd(),
+        "workspace-write",
+        "never",
+        queue_retry_seconds=0.01,
+    )
+    dispatcher.start()
+    dispatcher.enqueue("first follow-up", "test", "voice-job-1")
+    dispatcher.enqueue("second follow-up", "test", "voice-job-2")
+    deadline = time.time() + 2
+    while time.time() < deadline and len(codex.received) < 2:
+        time.sleep(0.01)
+    snapshot = dispatcher.snapshot()
+    dispatcher.stop()
+
+    assert codex.received == ["first follow-up", "second follow-up"]
+    assert snapshot["dispatcher_alive"] is True
+    assert snapshot["queue_size"] == 2
 
 
 def test_dispatcher_deduplicates_transport_retries() -> None:
@@ -168,3 +213,4 @@ def test_dispatcher_keeps_busy_session_task_queued_until_codex_can_start_it() ->
     assert codex.start_attempts == 2
     assert dispatcher.snapshot()["stage"] == "running"
     assert dispatcher.snapshot()["thread_id"] == "thread-1"
+

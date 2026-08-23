@@ -36,6 +36,15 @@ class RelayState:
     normalizer: str | None = None
 
 
+@dataclass(slots=True)
+class NativeQueuedJob:
+    job_id: str
+    thread_id: str
+    submission_id: str
+    transcript: str
+    normalizer: str
+
+
 class TaskDispatcher:
     def __init__(
         self,
@@ -63,14 +72,23 @@ class TaskDispatcher:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._active_turn_id: str | None = None
+        self._native_pending: dict[str, NativeQueuedJob] = {}
+        self._native_wakeup = threading.Event()
         self._worker = threading.Thread(target=self._run, name="codex-dispatch", daemon=True)
+        self._native_worker = threading.Thread(
+            target=self._run_native_queue_pump,
+            name="codex-native-queue",
+            daemon=True,
+        )
         self.codex.add_listener(self._handle_codex_event)
 
     def start(self) -> None:
         self._worker.start()
+        self._native_worker.start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._native_wakeup.set()
 
     def enqueue(self, transcript: str, source: str, request_id: str | None = None) -> RelayJob:
         transcript = transcript.strip()
@@ -112,7 +130,10 @@ class TaskDispatcher:
     def snapshot(self) -> dict[str, object]:
         with self._lock:
             result = asdict(self._state)
-        result["queue_size"] = self._queue.qsize()
+            native_count = len(self._native_pending)
+        result["queue_size"] = self._queue.qsize() + native_count
+        result["dispatcher_alive"] = self._worker.is_alive()
+        result["native_queue_alive"] = self._native_worker.is_alive()
         return result
 
     def _set_state(
@@ -139,7 +160,11 @@ class TaskDispatcher:
             self._state = RelayState("running", detail, job_id, thread_id, time.time(), normalizer)
 
     def _handle_codex_event(self, message: dict[str, object]) -> None:
-        if message.get("method") != "turn/completed":
+        method = message.get("method")
+        if method == "thread/queue/changed":
+            self._native_wakeup.set()
+            return
+        if method != "turn/completed":
             return
         params = message.get("params")
         turn = params.get("turn") if isinstance(params, dict) else None
@@ -169,6 +194,9 @@ class TaskDispatcher:
                 self._state.normalizer,
             )
             self._active_turn_id = None
+        # A completed turn may have made the next persistent Codex queue item
+        # runnable. Wake the independent pump; never block audio ingestion.
+        self._native_wakeup.set()
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -200,6 +228,16 @@ class TaskDispatcher:
                 thread_id = submitted["threadId"]
                 if submitted.get("queued"):
                     queued_submission_id = str(submitted.get("queuedSubmissionId") or "")
+                    if not queued_submission_id:
+                        raise CodexProtocolError("Codex 返回了无效的排队任务 ID")
+                    with self._lock:
+                        self._native_pending[queued_submission_id] = NativeQueuedJob(
+                            job.id,
+                            thread_id,
+                            queued_submission_id,
+                            normalized.text,
+                            normalized.engine,
+                        )
                     self._set_state(
                         "queued",
                         "Codex 正在回答，语音任务已排队；当前回答结束后会自动提交",
@@ -207,7 +245,11 @@ class TaskDispatcher:
                         thread_id,
                         normalized.engine,
                     )
-                    turn = self._wait_for_queued_turn(thread_id, queued_submission_id)
+                    self._native_wakeup.set()
+                    # The native queue pump owns waiting/retry. Returning here
+                    # keeps this worker free to transcribe and persist every
+                    # later request instead of blocking for up to 15 minutes.
+                    continue
                 else:
                     turn = submitted.get("turn") or {}
                 self._set_running(
@@ -222,18 +264,55 @@ class TaskDispatcher:
             finally:
                 self._queue.task_done()
 
-    def _wait_for_queued_turn(self, thread_id: str, queued_submission_id: str) -> dict[str, object]:
-        if not queued_submission_id:
-            raise CodexProtocolError("Codex 返回了无效的排队任务 ID")
-        deadline = time.monotonic() + self.queue_wait_seconds
-        last_error = "会话仍在回答"
-        while not self._stop.is_set() and time.monotonic() < deadline:
-            if self._stop.wait(self.queue_retry_seconds):
+    def _run_native_queue_pump(self) -> None:
+        """Start persistent Codex queue items without blocking ASR ingestion."""
+        while not self._stop.is_set():
+            self._native_wakeup.wait(self.queue_retry_seconds)
+            self._native_wakeup.clear()
+            if self._stop.is_set():
+                return
+            with self._lock:
+                thread_ids = {item.thread_id for item in self._native_pending.values()}
+            # Also recover queue items that survived a relay restart.
+            session_thread_id = self.codex.session_thread_id
+            if session_thread_id:
+                thread_ids.add(session_thread_id)
+            for thread_id in thread_ids:
+                if self._stop.is_set():
+                    return
+                try:
+                    queued = self.codex.list_queued_tasks(thread_id, limit=20)
+                    if not queued:
+                        continue
+                    submission = queued[0]
+                    submission_id = str(submission.get("id") or "")
+                    if not submission_id:
+                        continue
+                    turn = self.codex.start_queued_task(thread_id, submission_id)
+                except (CodexProtocolError, TimeoutError, KeyError):
+                    # An active desktop turn is the normal case. Retry after
+                    # the next completion notification or periodic wake-up.
+                    continue
+
+                with self._lock:
+                    pending = self._native_pending.pop(submission_id, None)
+                client_job_id = str(submission.get("clientUserMessageId") or submission_id)
+                if pending:
+                    detail = f"Codex 已接收：{pending.transcript[:72]}"
+                    job_id = pending.job_id
+                    normalizer = pending.normalizer
+                else:
+                    detail = "Codex 已开始此前排队的语音任务"
+                    job_id = client_job_id
+                    normalizer = "codex-native-queue"
+                self._set_running(
+                    detail,
+                    job_id,
+                    thread_id,
+                    str(turn.get("id") or "") or None,
+                    normalizer,
+                )
+                # Start at most one turn per pass. If other conversations have
+                # work, the short periodic wake-up will revisit them safely.
                 break
-            try:
-                return self.codex.start_queued_task(thread_id, queued_submission_id)
-            except CodexProtocolError as exc:
-                last_error = str(exc)
-        if self._stop.is_set():
-            raise CodexProtocolError("relay 已停止，排队任务保留在 Codex 队列中")
-        raise CodexProtocolError(f"等待 Codex 当前回答结束超时；任务仍保留在队列中：{last_error}")
+
