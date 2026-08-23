@@ -85,7 +85,7 @@ relay 使用 Codex CLI 自带的本机 `app-server` JSONL 协议来恢复会话�
    ```
 
 5. Windows 在防火墙中仅允许 TCP 8765 的“专用网络”入站；macOS 首次启动时允许 Python 接收入站连接。启用 BLE 时还需允许终端或 Python 使用蓝牙；ESP32 通过网络上传 PCM，不需要 Mac 麦克风权限。
-6. ESP32 切到 Codex 页，按 BOOT，说完并停顿，或再次按 BOOT 手动结束。
+6. ESP32 切到 Codex 页，按 BOOT 开始录音；说完停顿，或再次按 BOOT 手动结束。屏幕显示 ASR 清洗结果后，再按 BOOT 确认提交，或按 KEY 取消。
 
 登录自启动：
 
@@ -95,14 +95,17 @@ relay 使用 Codex CLI 自带的本机 `app-server` JSONL 协议来恢复会话�
 
 管理员环境会安装带重启策略的计划任务；普通用户环境会自动退回当前用户的登录启动项。两种方式都使用脚本内置的进程守护。
 
-健康检查：`GET http://127.0.0.1:8765/health`。状态接口和提交接口都使用 Bearer token；ESP32 PCM 接口是 `POST /v1/audio`，兼容文本接口是 `POST /v1/transcripts`。
+健康检查：`GET http://127.0.0.1:8765/health`。状态接口和提交接口都使用 Bearer token。两阶段录音协议依次使用 `POST /v1/audio/preview`、`POST /v1/pending/confirm` 或 `POST /v1/pending/cancel`；旧版立即提交接口 `POST /v1/audio` 和文本接口 `POST /v1/transcripts` 继续保留兼容。
+
+待确认文本默认保存 10 分钟，并写入被 Git 忽略的 `runtime/pending-previews.json`。这保证 relay 在“显示识别结果”和“第二次按 BOOT”之间重启时仍能继续确认。确认前不会调用 Codex，也不会占用 Codex 队列；取消后不会创建 turn。
 
 树莓派桥接只保留为可选网络转发方案，不参与 Codex 的录音、ASR、清洗或任务提交。默认部署下 ESP32 直接访问电脑的 8765 端口。
 
 ## 按键约定
 
-- KEY 单击：天气 → 音乐 → Codex → 天气。
-- Codex 页按 BOOT：启用 ESP32 麦克风直传电脑；说完停顿自动结束，再按一次也可手动结束。
+- KEY 单击：通常在天气 → Codex → 天气之间切换；出现待确认语音时，KEY 只取消本次提交并停留在 Codex 页。
+- Codex 页第一次按 BOOT：启用 ESP32 麦克风直传电脑；说完停顿自动结束，录音中再按一次可手动结束。
+- 屏幕出现识别结果后：再按 BOOT 才正式提交 Codex；按 KEY 则取消。确认前 Codex 不会收到任务。
 - 其他页面按 BOOT：保持原来的小智语音对话行为。
 
 ## S1-mini 的边界
@@ -131,7 +134,7 @@ $env:PYTHONPATH = "src"
 python -m pytest
 ```
 
-GitHub Actions 同时在 `windows-latest` 与 `macos-latest`、Python 3.11–3.13 上运行测试；macOS 任务还会检查所有 shell 脚本语法。由于当前开发机是 Windows，发布 macOS 版本前仍应在一台真实 Apple Silicon Mac 上完成 Codex 登录、局域网入站、CoreBluetooth 和休眠唤醒四项验收。
+GitHub Actions 同时在 `windows-latest` 与 `macos-latest`、Python 3.11–3.13 上运行包括预览、确认、取消和重启恢复在内的同一组测试；macOS 任务还会检查所有 shell 脚本语法。两端共用相同的 HTTP 状态机、SenseVoice/S1-mini 处理和官方 Codex app-server 客户端，因此交互效果一致。由于当前开发机是 Windows，发布 macOS 版本前仍应在一台真实 Apple Silicon Mac 上完成 Codex 登录、局域网入站、CoreBluetooth 和休眠唤醒四项硬件验收。
 
 ## License
 

@@ -156,6 +156,108 @@ def test_dispatcher_transcribes_audio_before_normalizing() -> None:
     assert codex.received == ["修复登录测试"]
 
 
+def test_audio_preview_does_not_submit_until_confirmed(tmp_path: Path) -> None:
+    codex = FakeCodex()
+    dispatcher = TaskDispatcher(
+        codex,
+        FakeNormalizer(),
+        "latest",
+        Path.cwd(),
+        "workspace-write",
+        "never",
+        FakeAsr(),  # type: ignore[arg-type]
+        preview_state_path=tmp_path / "pending.json",
+    )
+    dispatcher.start()
+    preview = dispatcher.preview_audio(b"\x01\x00" * 4, "esp32", "preview-1")
+    assert preview.transcript == "修复登录测试"
+    assert codex.received == []
+    assert dispatcher.snapshot()["stage"] == "awaiting_confirmation"
+    assert dispatcher.snapshot()["pending_confirmation"] == 1
+
+    dispatcher.confirm_preview("preview-1")
+    deadline = time.time() + 2
+    while time.time() < deadline and dispatcher.snapshot()["stage"] != "running":
+        time.sleep(0.01)
+    dispatcher.stop()
+    assert codex.received == ["修复登录测试"]
+    assert dispatcher.snapshot()["pending_confirmation"] == 0
+
+
+def test_cancelled_audio_preview_never_submits() -> None:
+    codex = FakeCodex()
+    dispatcher = TaskDispatcher(
+        codex,
+        FakeNormalizer(),
+        "latest",
+        Path.cwd(),
+        "workspace-write",
+        "never",
+        FakeAsr(),  # type: ignore[arg-type]
+    )
+    dispatcher.start()
+    dispatcher.preview_audio(b"\x01\x00" * 4, "esp32", "preview-2")
+    assert dispatcher.cancel_preview("preview-2") is True
+    time.sleep(0.05)
+    dispatcher.stop()
+    assert codex.received == []
+    assert dispatcher.snapshot()["stage"] == "cancelled"
+
+
+def test_audio_preview_confirmation_retry_is_idempotent(tmp_path: Path) -> None:
+    dispatcher = TaskDispatcher(
+        FakeCodex(),  # type: ignore[arg-type]
+        FakeNormalizer(),
+        "latest",
+        Path.cwd(),
+        "workspace-write",
+        "never",
+        FakeAsr(),  # type: ignore[arg-type]
+        preview_state_path=tmp_path / "pending.json",
+    )
+    dispatcher.preview_audio(b"\x01\x00" * 4, "esp32", "preview-retry")
+
+    first = dispatcher.confirm_preview("preview-retry")
+    second = dispatcher.confirm_preview("preview-retry")
+
+    assert second is first
+    assert dispatcher.snapshot()["queue_size"] == 1
+
+
+def test_pending_audio_preview_survives_relay_restart(tmp_path: Path) -> None:
+    state_path = tmp_path / "pending.json"
+    first = TaskDispatcher(
+        FakeCodex(),  # type: ignore[arg-type]
+        FakeNormalizer(),
+        "latest",
+        Path.cwd(),
+        "workspace-write",
+        "never",
+        FakeAsr(),  # type: ignore[arg-type]
+        preview_state_path=state_path,
+    )
+    first.preview_audio(b"\x01\x00" * 4, "esp32", "preview-restart")
+
+    codex = FakeCodex()
+    restarted = TaskDispatcher(
+        codex,
+        FakeNormalizer(),
+        "latest",
+        Path.cwd(),
+        "workspace-write",
+        "never",
+        FakeAsr(),  # type: ignore[arg-type]
+        preview_state_path=state_path,
+    )
+    restarted.start()
+    restarted.confirm_preview("preview-restart")
+    deadline = time.time() + 2
+    while time.time() < deadline and restarted.snapshot()["stage"] != "running":
+        time.sleep(0.01)
+    restarted.stop()
+    assert codex.received == ["修复登录测试"]
+
+
 def test_dispatcher_closes_running_state_on_codex_completion() -> None:
     codex = FakeCodex()
     dispatcher = TaskDispatcher(
@@ -213,4 +315,3 @@ def test_dispatcher_keeps_busy_session_task_queued_until_codex_can_start_it() ->
     assert codex.start_attempts == 2
     assert dispatcher.snapshot()["stage"] == "running"
     assert dispatcher.snapshot()["thread_id"] == "thread-1"
-

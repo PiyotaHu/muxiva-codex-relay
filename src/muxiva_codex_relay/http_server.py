@@ -42,7 +42,14 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self) -> None:
-        if self.path not in {"/v1/transcripts", "/v1/audio", "/v1/display"}:
+        if self.path not in {
+            "/v1/transcripts",
+            "/v1/audio",
+            "/v1/audio/preview",
+            "/v1/pending/confirm",
+            "/v1/pending/cancel",
+            "/v1/display",
+        }:
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
         if not self._authorized():
@@ -51,7 +58,7 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        maximum = 1024 * 1024 if self.path == "/v1/audio" else 64 * 1024
+        maximum = 1024 * 1024 if self.path in {"/v1/audio", "/v1/audio/preview"} else 64 * 1024
         if length <= 0 or length > maximum:
             self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid content length"})
             return
@@ -65,11 +72,32 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
                 self.server.set_display_active(active)
                 self._json(HTTPStatus.OK, {"ok": True, "active": active})
                 return
-            if self.path == "/v1/audio":
+            if self.path in {"/v1/audio", "/v1/audio/preview"}:
                 self.server.set_display_active(True)
                 source = str(self.headers.get("X-Muxiva-Source", "esp32"))[:64]
                 request_id = str(self.headers.get("X-Request-Id", "")).strip() or None
+                if self.path == "/v1/audio/preview":
+                    preview = self.server.dispatcher.preview_audio(body, source, request_id)
+                    self._json(
+                        HTTPStatus.OK,
+                        {
+                            "ready": True,
+                            "request_id": preview.id,
+                            "transcript": preview.transcript,
+                            "normalizer": preview.normalizer,
+                        },
+                    )
+                    return
                 job = self.server.dispatcher.enqueue_audio(body, source, request_id)
+            elif self.path in {"/v1/pending/confirm", "/v1/pending/cancel"}:
+                payload = json.loads(body)
+                request_id = str(payload.get("request_id", "")).strip()
+                if self.path == "/v1/pending/confirm":
+                    job = self.server.dispatcher.confirm_preview(request_id)
+                else:
+                    cancelled = self.server.dispatcher.cancel_preview(request_id)
+                    self._json(HTTPStatus.OK, {"cancelled": cancelled, "request_id": request_id})
+                    return
             else:
                 self.server.set_display_active(True)
                 payload: dict[str, Any] = json.loads(body)
@@ -82,6 +110,9 @@ class RelayRequestHandler(BaseHTTPRequestHandler):
             return
         except queue.Full:
             self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "task queue is full"})
+            return
+        except RuntimeError as exc:
+            self._json(HTTPStatus.BAD_GATEWAY, {"error": str(exc)})
             return
         self._json(HTTPStatus.ACCEPTED, {"accepted": True, "job_id": job.id})
 

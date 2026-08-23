@@ -42,6 +42,7 @@ def run(config: RelayConfig) -> None:
         config.codex_sandbox,
         config.codex_approval_policy,
         asr,
+        preview_state_path=Path("runtime/pending-previews.json"),
     )
     ble = BleCodexTransport(config.ble_enabled, config.ble_device_name, config.relay_token, dispatcher)
     publisher = StatusPublisher(
@@ -100,4 +101,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
