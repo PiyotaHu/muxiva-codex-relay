@@ -179,7 +179,7 @@ class TaskDispatcher:
         with self._lock:
             self._remove_expired_previews_locked()
             # Confirmation is idempotent: if the relay accepted the first
-            # request but the HTTP response was lost, a board retry must not
+            # request but the BLE result was lost, a board retry must not
             # report a false failure or enqueue the task twice.
             previous = self._seen.get(preview_id)
             if previous is not None:

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import signal
 import sys
-import threading
+import time
 from pathlib import Path
 
 from .codex_client import CodexAppServer, discover_codex_binary
 from .ble_transport import BleCodexTransport
 from .config import RelayConfig
 from .dispatcher import TaskDispatcher
-from .http_server import RelayHttpServer
 from .normalizer import TranscriptNormalizer
 from .qwen_asr import QwenRealtimeAsr
 from .sensevoice_asr import SenseVoiceAsr
@@ -44,30 +43,25 @@ def run(config: RelayConfig) -> None:
         asr,
         preview_state_path=Path("runtime/pending-previews.json"),
     )
-    ble = BleCodexTransport(config.ble_enabled, config.ble_device_name, config.relay_token, dispatcher)
+    ble = BleCodexTransport(
+        config.ble_device_name,
+        dispatcher,
+        selection_path=config.ble_selection_path,
+    )
     publisher = StatusPublisher(
         codex,
         dispatcher,
-        config.esp_hub_url,
-        config.esp_hub_token,
         config.status_interval_seconds,
         ble.publish_status,
         config.codex_target,
         Path("runtime/display-active.json"),
     )
-    server = RelayHttpServer(
-        (config.host, config.port),
-        config.relay_token,
-        dispatcher,
-        publisher.set_display_active,
-    )
-    stop = threading.Event()
+    ble.set_display_handler(publisher.set_display_active)
+    stop = False
 
     def shutdown(*_: object) -> None:
-        if stop.is_set():
-            return
-        stop.set()
-        threading.Thread(target=server.shutdown, daemon=True).start()
+        nonlocal stop
+        stop = True
 
     signal.signal(signal.SIGINT, shutdown)
     if hasattr(signal, "SIGTERM"):
@@ -76,17 +70,17 @@ def run(config: RelayConfig) -> None:
     dispatcher.start()
     ble.start()
     publisher.start()
-    print(f"muxiva-codex-relay listening on http://{config.host}:{config.port}")
+    print("muxiva-codex-relay ready; waiting for ESP32 over Bluetooth LE")
     print(f"Codex: {binary}")
     print("S1-mini:", config.s1_base_url or "disabled (Chinese ASR text still passes through safely)")
     print("ASR:", f"{config.asr_provider} ({'ready' if asr.configured else 'model/config missing'})")
     try:
-        server.serve_forever(poll_interval=0.5)
+        while not stop:
+            time.sleep(0.25)
     finally:
         publisher.stop()
         ble.stop()
         dispatcher.stop()
-        server.server_close()
         codex.close()
 
 

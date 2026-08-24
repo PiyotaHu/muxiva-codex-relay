@@ -25,11 +25,7 @@ PY
 
 "$python_bin" -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-if [[ "${MUXIVA_BLE_ENABLED:-0}" =~ ^(1|true|yes|on)$ ]]; then
-  .venv/bin/python -m pip install -e '.[ble]'
-else
-  .venv/bin/python -m pip install -e .
-fi
+.venv/bin/python -m pip install -e .
 
 if [[ "${MUXIVA_SKIP_SENSEVOICE_MODEL:-0}" != "1" ]]; then
   .venv/bin/python scripts/install-sensevoice.py
@@ -37,7 +33,7 @@ fi
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
-  printf 'Created %s/.env; edit its token, ESP32 address, Codex workspace and thread.\n' "$repo"
+  printf 'Created %s/.env; set the Codex workspace if the default is not suitable.\n' "$repo"
 fi
 
 chmod +x scripts/start-relay.sh scripts/start-s1-mini.sh scripts/install-autostart-macos.sh

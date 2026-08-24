@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 import threading
 import time
-import urllib.request
 from typing import Any, Callable
 
 from .codex_client import CodexAppServer
@@ -141,7 +140,7 @@ def build_hub_payload(
     active_count = sum(item["state"] in {"busy", "waiting"} for item in agents)
     # ``latest`` and ``all_agents[0]`` refer to the same conversation. The
     # firmware renders the full message from all_agents; avoid duplicating the
-    # potentially long answer in the HTTP frame (the ESP endpoint has a small
+    # potentially long answer in the BLE frame (the ESP parser has a small
     # bounded request buffer).
     latest_summary = dict(latest)
     if agents:
@@ -171,24 +170,20 @@ class StatusPublisher:
         self,
         codex: CodexAppServer,
         dispatcher: TaskDispatcher,
-        hub_url: str,
-        hub_token: str,
         interval_seconds: int,
-        secondary_publish: Callable[[dict[str, Any]], None] | None = None,
+        publish: Callable[[dict[str, Any]], None] | None = None,
         target: str = "latest",
         display_state_path: Path | None = None,
     ):
         self.codex = codex
         self.dispatcher = dispatcher
-        self.hub_url = hub_url
-        self.hub_token = hub_token
         self.interval_seconds = interval_seconds
-        self.secondary_publish = secondary_publish
+        self.publish = publish
         self.target = target
         self.display_state_path = display_state_path
         self._stop = threading.Event()
         # ESP32 starts on the Xiaozhi/weather page. Do not continuously push
-        # Codex snapshots over its real-time audio Wi-Fi path until the user
+        # Codex snapshots over its page-scoped BLE path until the user
         # explicitly opens the Codex page.
         self._display_active = threading.Event()
         # ``latest`` is resolved when the user enters the Codex page. Keep the
@@ -199,7 +194,6 @@ class StatusPublisher:
             self._display_active.set()
             self._refresh_latest.set()
         self._thread = threading.Thread(target=self._run, name="status-publisher", daemon=True)
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self._thread_cache: dict[str, tuple[object, dict[str, str]]] = {}
 
     def start(self) -> None:
@@ -294,19 +288,8 @@ class StatusPublisher:
                     self._thread_cache[thread_id] = (revision, messages)
                     recent_messages[thread_id] = messages
                 payload = build_hub_payload(threads, self.dispatcher.snapshot(), recent_messages)
-                if self.secondary_publish:
-                    self.secondary_publish(payload)
-                request = urllib.request.Request(
-                    self.hub_url,
-                    data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                    headers={
-                        "Authorization": f"Bearer {self.hub_token}",
-                        "Content-Type": "application/json; charset=utf-8",
-                    },
-                    method="POST",
-                )
-                with self._opener.open(request, timeout=4) as response:
-                    response.read(256)
+                if self.publish:
+                    self.publish(payload)
             except Exception:
                 # The ESP32 may be sleeping or rebooting; next tick retries.
                 pass

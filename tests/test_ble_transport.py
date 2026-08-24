@@ -1,6 +1,8 @@
 import asyncio
 from dataclasses import dataclass
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 from muxiva_codex_relay.ble_transport import BleCodexTransport, MAX_STATUS_FRAME_BYTES
 
@@ -18,13 +20,22 @@ class FakeDispatcher:
         self.received.append((transcript, source, request_id))
         return Job(request_id or "generated")
 
+    def preview_audio(self, audio: bytes, source: str, request_id: str) -> SimpleNamespace:
+        self.preview = (audio, source, request_id)
+        return SimpleNamespace(id=request_id, transcript="清洗后的任务", normalizer="sensevoice")
 
-def test_ble_reassembles_chunks_and_authenticates() -> None:
+    def confirm_preview(self, request_id: str) -> None:
+        self.confirmed = request_id
+
+    def cancel_preview(self, request_id: str) -> None:
+        self.cancelled = request_id
+
+
+def test_ble_reassembles_control_without_shared_token() -> None:
     dispatcher = FakeDispatcher()
-    transport = BleCodexTransport(True, "Muxiva-RLCD", "secret", dispatcher)  # type: ignore[arg-type]
-    transport.feed_notification(b'{"token":"secret","trans')
-    transport.feed_notification(b'cript":"run tests","request_id":"r1"}\n')
-    transport.feed_notification(b'{"token":"wrong","transcript":"ignore"}\n')
+    transport = BleCodexTransport("Muxiva-RLCD", dispatcher)  # type: ignore[arg-type]
+    transport.feed_control_notification(b'{"type":"transcript","trans')
+    transport.feed_control_notification(b'cript":"run tests","request_id":"r1"}\n')
     assert dispatcher.received == [("run tests", "esp32-ble", "r1")]
 
 
@@ -40,13 +51,13 @@ class FakeBleClient:
 
 
 def test_ble_status_writes_respect_negotiated_mtu() -> None:
-    transport = BleCodexTransport(True, "Muxiva-RLCD", "secret", FakeDispatcher())  # type: ignore[arg-type]
+    transport = BleCodexTransport("Muxiva-RLCD", FakeDispatcher())  # type: ignore[arg-type]
     client = FakeBleClient()
     transport._client = client
 
     asyncio.run(transport._write_status(b"x" * 250))
 
-    assert [len(data) for _, data, _ in client.writes] == [120, 120, 10]
+    assert [len(data) for _, data, _ in client.writes] == [125, 125]
     assert all(response for _, _, response in client.writes)
 
 
@@ -88,3 +99,56 @@ def test_ble_status_trims_oversized_user_and_metadata_without_answer() -> None:
 
     assert len(frame) <= MAX_STATUS_FRAME_BYTES
     assert json.loads(frame)["all_agents"][0]["agent_id"] == "thread-1"
+
+
+def test_ble_audio_frames_are_reassembled_for_preview(monkeypatch) -> None:
+    dispatcher = FakeDispatcher()
+    transport = BleCodexTransport("Muxiva-RLCD", dispatcher)  # type: ignore[arg-type]
+    events: list[dict] = []
+    monkeypatch.setattr(transport, "_publish_event", events.append)
+
+    class InlineThread:
+        def __init__(self, *, target, args, **_kwargs) -> None:
+            self.target = target
+            self.args = args
+
+        def start(self) -> None:
+            self.target(*self.args)
+
+    monkeypatch.setattr("muxiva_codex_relay.ble_transport.threading.Thread", InlineThread)
+    transport.feed_control_notification(b'{"type":"audio_start","request_id":"voice-1"}\n')
+    transport.feed_audio_notification(b"\x01\x02")
+    transport.feed_audio_notification(b"\x03\x04")
+    transport.feed_control_notification(b'{"type":"audio_end","request_id":"voice-1"}\n')
+
+    assert dispatcher.preview == (b"\x01\x02\x03\x04", "esp32-ble", "voice-1")
+    assert events == [{
+        "type": "preview_result",
+        "ok": True,
+        "request_id": "voice-1",
+        "transcript": "清洗后的任务",
+        "normalizer": "sensevoice",
+    }]
+
+
+def test_unique_ble_device_connects_and_is_remembered(tmp_path: Path) -> None:
+    selection = tmp_path / "ble-device.json"
+    transport = BleCodexTransport("Muxiva-RLCD", FakeDispatcher(), selection)  # type: ignore[arg-type]
+    device = SimpleNamespace(name="Muxiva-RLCD", address="AA:BB")
+
+    assert asyncio.run(transport._select_device([device])) is device
+    assert json.loads(selection.read_text(encoding="utf-8"))["device_id"] == "AA:BB"
+
+
+def test_background_start_uses_confirmed_device_when_multiple(tmp_path: Path, monkeypatch) -> None:
+    selection = tmp_path / "ble-device.json"
+    selection.write_text('{"device_id":"second"}', encoding="utf-8")
+    transport = BleCodexTransport("Muxiva-RLCD", FakeDispatcher(), selection)  # type: ignore[arg-type]
+    first = SimpleNamespace(name="Muxiva-RLCD", address="first")
+    second = SimpleNamespace(name="Muxiva-RLCD", address="second")
+    monkeypatch.setattr(
+        "muxiva_codex_relay.ble_transport.sys.stdin",
+        SimpleNamespace(isatty=lambda: False),
+    )
+
+    assert asyncio.run(transport._select_device([first, second])) is second

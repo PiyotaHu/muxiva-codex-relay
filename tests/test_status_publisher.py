@@ -25,8 +25,6 @@ def make_publisher(codex: FakeCodex, target: str = "latest", display_state_path=
     return StatusPublisher(
         codex,  # type: ignore[arg-type]
         FakeDispatcher(),  # type: ignore[arg-type]
-        "http://127.0.0.1:8080/hub",
-        "token",
         1,
         target=target,
         display_state_path=display_state_path,

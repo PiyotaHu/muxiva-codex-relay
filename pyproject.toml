@@ -5,10 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "muxiva-codex-relay"
 version = "0.1.0"
-description = "LAN relay that submits cleaned ESP32 dictation to local Codex sessions"
+description = "Bluetooth relay that submits cleaned ESP32 dictation to local Codex sessions"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "bleak>=0.22,<2",
   "numpy>=2,<3",
   "sherpa-onnx>=1.13,<2",
   "websocket-client>=1.8,<2",
@@ -32,7 +33,6 @@ muxiva-codex-relay = "muxiva_codex_relay.app:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
-ble = ["bleak>=0.22,<2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/muxiva_codex_relay"]

@@ -6,7 +6,7 @@ Please report vulnerabilities privately through GitHub Security Advisories inste
 
 ## Deployment guidance
 
-- Use a long random relay token and never commit `.env`.
-- Expose the relay only on a trusted local network.
+- Keep `.env`, local model files, device-selection state and Codex credentials out of commits.
+- The relay exposes no HTTP listener. Keep Bluetooth disabled when the device integration is not in use.
 - Keep Codex at `workspace-write` unless broader access is intentionally required.
-- The relay never needs Codex account cookies or tokens; it launches the locally authenticated Codex CLI.
+- The relay never needs Codex account cookies or API tokens; it launches the locally authenticated Codex CLI.
